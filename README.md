@@ -1,142 +1,48 @@
-# Postificus: Centralized Content Distribution Engine
+# ContentDesk
 
-![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat&logo=go) ![React](https://img.shields.io/badge/Frontend-React-61DAFB?style=flat&logo=react) ![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat&logo=docker) ![Redis](https://img.shields.io/badge/Queue-Asynq%20%2F%20Redis-DC382D?style=flat&logo=redis) ![Status](https://img.shields.io/badge/Status-Active_Development-success)
+Student project: write a post once and publish it to more than one site (Dev.to, Medium, LinkedIn).
 
-**Postificus** is a high-performance, event-driven content engine designed to solve the fragmentation of technical blogging. It allows authors to write content once and orchestrate its distribution across a disparate ecosystem of platforms (Medium, Dev.to, LinkedIn) while strictly enforcing SEO authority via Canonical URLs.
+The Go API stores the draft, enqueues jobs, and records status. A React editor is the UI. PostgreSQL holds posts. Redis and Asynq run the workers. If a site has a write API, that is used first. If it does not, a headless browser is the fallback. Canonical URLs are set so the same article is not treated as duplicate SEO content. Duplicate URL checks and retries are built in.
 
-## 🚀 Architecture
+This is coursework/personal software, not a company product.
 
-The system moves beyond simple API scripting by implementing a **Multi-Stage Resilience Pipeline**.
+## Stack
 
-### 1. The Core (Backend)
-Built with **Go** and **Echo**, the backend is split into two services for scalability:
-*   **API Service (`cmd/api`)**: Handles REST endpoints, authentication, and job enqueuing. High throughput, low latency.
-*   **Worker Service (`cmd/worker`)**: Consumes jobs from **Redis** (via `Asynq`) and executes heavy automation tasks. This isolation prevents browser automation from blocking HTTP requests.
+- Backend: Go (Echo), PostgreSQL, Redis, Asynq
+- Frontend: React, Vite, Tailwind CSS, Tiptap editor
+- Optional: Docker Compose, headless Chrome via Go-Rod
 
-### 2. The Interface (Frontend)
-A modern, distraction-free writing experience built with **React**, **Vite**, and **TailwindCSS**.
-*   **Editor**: Powered by **Tiptap**, offering a Notion-like rich text experience.
-*   **Real-time Status**: Polls the backend for publication status across all platforms.
+## Layout
 
-## 🛡️ The "Unstoppable" Delivery System
+- `cmd/api` — HTTP API, auth, enqueue jobs
+- `cmd/worker` — job consumers (publish, retries, browser fallback)
+- `frontend` — editor and status UI
 
-Unlike standard cross-posters that fail when an API goes down, Postificus implements a **Hierarchical Fallback Strategy**:
+## Run locally
 
-| Priority | Method | Description |
-| :--- | :--- | :--- |
-| **1. Primary** | **Direct API** | Uses official REST APIs (e.g., Dev.to). Fastest and most reliable. |
-| **2. Last Resort** | **Stealth Automation** | The "Nuclear Option." Uses **Go-Rod** to launch a headless browser, bypass bot detection, log in, and physically type the content into the editor. Used for platforms without write APIs (like LinkedIn personal profiles). |
-
-## ✨ Key Features
-
-### 🧠 Core Backend
-*   **Event-Driven Architecture:** Decoupled ingestion and processing layers.
-*   **SEO Guardrails:** Automatically manages `rel=canonical` tags to protect your domain authority.
-*   **Concurrency Control:** Worker pools are rate-limited per domain to prevent IP bans.
-
-### 🕵️ Browser Automation
-*   **Stealth Mode:** Uses `rod-stealth` to strip `navigator.webdriver` flags, allowing the bot to pass as a human user on Single Page Applications (SPAs).
-*   **Headless Production:** Automatically detects production environments (Docker/Render) to run headlessly, while keeping the UI visible for local debugging.
-
-## 🚀 Getting Started
-
-Follow these instructions to set up the project locally.
-
-### Prerequisites
-
-*   **Go**: v1.24 or higher
-*   **Node.js**: v20 or higher (for frontend)
-*   **Docker**: (Optional) For containerized execution
-*   **Redis**: Required for the task queue (if running locally without Docker)
-*   **PostgreSQL**: Required for the database (if running locally without Docker)
-
-### Installation
-
-1.  **Clone the repository**
-    ```bash
-    git clone https://github.com/unichronic/postificus.git
-    cd postificus
-    ```
-
-2.  **Configure Environment**
-    Copy the example environment file and fill in your credentials:
-    ```bash
-    cp .env.example .env
-    ```
-    > **Note:** You will need to obtain session cookies/tokens for Dev.to, Medium, and LinkedIn manually from your browser dev tools if you plan to use the automation features.
-
-### Running with Docker (Recommended)
-
-The easiest way to run the entire stack (DB, Redis, API, Worker, Frontend) is using Docker Compose.
+Needs Go 1.24+, Node 20+, Docker (for Postgres and Redis) or local installs of both.
 
 ```bash
-docker-compose up --build
+git clone https://github.com/tejasva-vardhan/ContentDesk.git
+cd ContentDesk
+cp .env.example .env
+docker compose up --build
 ```
 
-The application will be available at:
-*   **Frontend**: http://localhost:5173 (or the port exposed by Vite)
-*   **API**: http://localhost:8080
+- UI: http://localhost:5173
+- API: http://localhost:8080
 
-### Local Development
+Without full Compose:
 
-If you prefer to run services individually for development:
+```bash
+docker compose up -d db redis
+go run cmd/api/main.go
+go run cmd/worker/main.go
+cd frontend && npm install && npm run dev
+```
 
-1.  **Start Dependencies (DB & Redis)**
-    ```bash
-    docker-compose up -d db redis rabbitmq
-    ```
+Fill `.env` with database, Redis, and (if you use the browser fallback) site session cookies from your own accounts. Do not commit `.env`.
 
-2.  **Run the Backend (API)**
-    ```bash
-    go run cmd/api/main.go
-    ```
+## Author
 
-3.  **Run the Worker (in a separate terminal)**
-    ```bash
-    go run cmd/worker/main.go
-    ```
-
-4.  **Run the Frontend**
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
-
-## ☁️ Deployment
-
-The system is architected for a modern cloud stack:
-
-*   **Backend**: Deployed as a Docker container on **Render**.
-    *   *Note*: Requires a custom Dockerfile to include Chromium dependencies.
-*   **Frontend**: Deployed as a static SPA on **Vercel** (or any static host).
-*   **Database**: Supabase Postgres (Direct connection).
-*   **Auth**: Supabase Auth (JWTs validated by API).
-*   **Cache/Queue**: Redis Cloud.
-*   **Task Queue**: CloudAMQP (RabbitMQ).
-*   **Object Storage**: Supabase Storage (S3-compatible).
-*   **Monitoring**: Grafana Cloud (Agent + remote_write).
-
-### Production Environment Variables
-
-Make sure these are set in Render (or your hosting dashboard):
-
-* `DATABASE_URL` (Supabase **Direct** URL with `sslmode=require`)
-* `REDIS_URL` (Redis Cloud URL. Use `redis://` for non-TLS, `rediss://` for TLS)
-* `RABBITMQ_URL` (CloudAMQP `amqps://` URL)
-* `SUPABASE_URL`
-* `SUPABASE_STORAGE_BUCKET`
-* `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
-* `DEFAULT_USER_ID` (use `00000000-0000-0000-0000-000000000001` until Auth is wired)
-
-
-## 🛠️ Tech Stack
-
-*   **Language:** Golang 1.24
-*   **Frontend:** React, Vite, TailwindCSS
-*   **Web Framework:** Echo v4
-*   **Task Queue:** Asynq (Redis)
-*   **Browser Automation:** Go-Rod (Stealth + CDP)
-*   **Database:** Supabase Postgres (pgx)
-*   **Auth:** Supabase Auth
-*   **Infrastructure:** Render, Redis Cloud, CloudAMQP, Supabase Storage, Grafana Cloud
+Tejasva Vardhan Sharma
