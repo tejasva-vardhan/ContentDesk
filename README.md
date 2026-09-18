@@ -1,47 +1,81 @@
 # ContentDesk
 
-Student project: write an article once in a browser editor and publish it to **Medium** and **Dev.to** without blocking the HTTP API on the site publish.
+Write an article once, publish it to **Medium** and **Dev.to**.
 
-This is coursework, not a company product. LinkedIn publishing is not implemented.
+The editor is a React + Tiptap app. Drafts live in PostgreSQL. Publish is a background job: the API enqueues on RabbitMQ and returns immediately; a worker talks to the site (Medium REST API first, headless Chrome if that fails; Dev.to via Chrome session cookies). Redis is used for rate limits and cache, not as the queue.
 
-## How a publish works
+LinkedIn publish was removed from the worker. Do not treat `LI_AT` in `.env.example` as a live feature.
 
-1. The React app (Tiptap editor) saves a draft to PostgreSQL through the Go API.
-2. `POST /api/publish/{medium|devto}` builds a job payload (title, HTML, tags, cover image) and puts it on **RabbitMQ**.
-3. The API returns `queued` immediately.
-4. `cmd/worker` consumes the job:
-   - **Medium:** write API first (`internal/browser/medium_api.go`). If that fails, Go-Rod drives a headless Chrome session with stored cookies.
-   - **Dev.to:** Go-Rod only (cookie session; no write API path).
-5. Circuit breakers in `internal/breaker` stop hammering a platform after repeated failures. Redis is used for cache and rate limits, not as the job queue.
+## Why the split
 
-Session cookies / Medium uid-sid-xsrf come from the user’s own accounts (settings UI or `.env`). Do not commit `.env`.
+Site publish is slow and flaky (cookies, file pickers, rate limits). Keeping it on the HTTP request would hang the editor. `cmd/api` only authenticates, stores drafts, and enqueues. `cmd/worker` owns retries, circuit breakers, and the browser.
+
+## Features
+
+- Landing, dashboard, profile, settings, full-page editor
+- Draft save / load (`PUT/GET /api/drafts/:id`)
+- Cover image upload (`POST /api/upload`) — S3-compatible (MinIO / Supabase storage)
+- Connect Medium and Dev.to (browser extension under `extension/` harvests session cookies)
+- Publish: `POST /api/publish/medium` or `/api/publish/devto` → `{ "status": "queued" }`
+- Activity pulls from Medium / Dev.to (`GET /api/medium/activity`, `/api/devto/activity`)
+- Prometheus metrics at `/metrics`
+
+## Publish path
+
+```
+Editor  --HTTP-->  cmd/api  --RabbitMQ-->  cmd/worker
+                                              |
+                         Medium: REST API, then Go-Rod fallback
+                         Dev.to: Go-Rod + session cookie
+```
+
+Circuit breakers (`internal/breaker`) open after repeated platform failures. Credentials come from the settings API or environment (`MEDIUM_UID` / `MEDIUM_SID` / `MEDIUM_XSRF`, `DEVTO_SESSION_TOKEN`). Never commit `.env`.
 
 ## Stack
 
-- API: Go, Echo (`cmd/api`)
-- Worker: Go, RabbitMQ consumer (`cmd/worker`)
-- Store: PostgreSQL (drafts, users, credentials)
-- Redis: rate limit / cache
-- Queue: RabbitMQ
-- UI: React, Vite, Tailwind, Tiptap
-- Browser fallback: Go-Rod + Chromium
-- Optional: Docker Compose (Postgres, Redis, RabbitMQ, MinIO), Chrome/Firefox extension under `extension/`
+| Layer | Tech |
+|---|---|
+| API | Go, Echo |
+| Worker | Go, RabbitMQ consumer, Go-Rod |
+| Database | PostgreSQL |
+| Cache / rate limit | Redis |
+| Queue | RabbitMQ |
+| Object storage | S3-compatible (optional) |
+| Frontend | React, Vite, Tailwind, Tiptap |
+| Extension | Chrome / Firefox (cookie capture) |
+
+## HTTP API (`:8080`)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | liveness |
+| POST | `/api/connect/:platform` | connect account |
+| POST/GET/DELETE | `/api/settings/credentials` | store / inspect / drop cookies |
+| GET/PUT | `/api/profile` | profile |
+| GET/PUT | `/api/drafts/:id` | drafts |
+| POST | `/api/upload` | cover image |
+| POST | `/api/publish/:platform` | enqueue publish (`medium` \| `devto`) |
+| GET | `/api/dashboard/activity` | dashboard |
+| GET | `/api/medium/activity`, `/api/devto/activity` | live platform activity |
 
 ## Layout
 
 ```
-cmd/api            HTTP: auth, drafts, settings, enqueue publish
-cmd/worker         Consume publish jobs, call site API or browser
-internal/browser   Medium API + Rod automation, Dev.to Rod
-internal/service   Draft, auth, publish, activity
-internal/storage   Postgres, Redis, S3 helpers
-frontend           Editor, settings, activity
-extension          Browser extension used to capture site session cookies
+cmd/api/            Echo server (producer only)
+cmd/worker/         job consumer
+internal/browser/   Medium API + Rod, Dev.to Rod
+internal/service/   drafts, auth, publish, activity
+internal/storage/   Postgres, Redis, S3
+internal/rabbitmq/  producer / consumer
+internal/breaker/   per-platform circuit breaker
+frontend/           pages: Landing, Dashboard, Editor, Settings, Profile
+extension/          browser extension zips + source
+docker-compose.yml  db, redis, rabbitmq, minio, api, worker
 ```
 
 ## Run locally
 
-Needs Go 1.24+, Node 20+, Docker (or local Postgres, Redis, and RabbitMQ).
+Go 1.24+, Node 20+, Docker (or local Postgres + Redis + RabbitMQ).
 
 ```bash
 git clone https://github.com/tejasva-vardhan/ContentDesk.git
@@ -56,6 +90,8 @@ cd frontend && npm install && npm run dev
 - UI: http://localhost:5173
 - API: http://localhost:8080
 
-## Author
+Fill `.env` with `DATABASE_URL`, `REDIS_URL`, `RABBITMQ_URL`, and platform cookies from **your** accounts.
 
-Tejasva Vardhan Sharma
+## License
+
+MIT.
