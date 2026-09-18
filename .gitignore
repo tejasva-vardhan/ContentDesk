@@ -37,6 +37,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.cursor/
 
 # Junk
 medium_blocked.png
